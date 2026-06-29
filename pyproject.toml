@@ -17,3 +17,10 @@ dependencies = [
 
 [project.scripts]
 aitest = "aitest.cli:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests that require a live LLM server (deselect with '-m \"not integration\"')",
+    "appium: marks tests that require a live Appium server (deselect with '-m \"not appium\"')",
+]
