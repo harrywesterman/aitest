@@ -1,7 +1,12 @@
+import json
 import re
 
 
 class TestGenerator:
+    @staticmethod
+    def _uiautomator_selector(kind: str, value: str) -> str:
+        return f'new UiSelector().{kind}({json.dumps(value)})'
+
     @staticmethod
     def _normalize_id(selector_value: str, app_package: str = "") -> str:
         if not app_package or "/" in selector_value or ":" in selector_value:
@@ -33,20 +38,27 @@ class TestGenerator:
         if t == "type":
             type_val = action.get("value", "")
             if sel_type == "text":
-                return f"""{indent}el = driver.find_element(AppiumBy.XPATH, '//*[@text="{sel_val}"]'){indent}el.clear(){indent}el.send_keys("{type_val}")"""
+                selector = TestGenerator._uiautomator_selector("text", sel_val)
+                return f"""{indent}el = driver.find_element(AppiumBy.ANDROID_UIAUTOMATOR, '{selector}'){indent}el.clear(){indent}el.send_keys({json.dumps(type_val)})"""
             if sel_type == "id":
                 sel_val = TestGenerator._normalize_id(sel_val, app_package)
-                return f"""{indent}el = driver.find_element(AppiumBy.ID, "{sel_val}"){indent}el.clear(){indent}el.send_keys("{type_val}")"""
-            return f"""{indent}el = driver.find_element(AppiumBy.XPATH, "{sel_val}"){indent}el.clear(){indent}el.send_keys("{type_val}")"""
+                return f"""{indent}el = driver.find_element(AppiumBy.ID, "{sel_val}"){indent}el.clear(){indent}el.send_keys({json.dumps(type_val)})"""
+            if sel_type in {"description", "content-desc", "accessibility_id"}:
+                return f"""{indent}el = driver.find_element(AppiumBy.ACCESSIBILITY_ID, {json.dumps(sel_val)}){indent}el.clear(){indent}el.send_keys({json.dumps(type_val)})"""
+            return f"""{indent}el = driver.find_element(AppiumBy.XPATH, {json.dumps(sel_val)}){indent}el.clear(){indent}el.send_keys({json.dumps(type_val)})"""
 
         if sel_type == "text":
-            return f"""{indent}driver.find_element(AppiumBy.XPATH, '//*[@text="{sel_val}"]').click()"""
+            selector = TestGenerator._uiautomator_selector("text", sel_val)
+            return f"""{indent}driver.find_element(AppiumBy.ANDROID_UIAUTOMATOR, '{selector}').click()"""
 
         if sel_type == "id":
             sel_val = TestGenerator._normalize_id(sel_val, app_package)
             return f"""{indent}driver.find_element(AppiumBy.ID, "{sel_val}").click()"""
 
-        return f"""{indent}driver.find_element(AppiumBy.XPATH, "{sel_val}").click()"""
+        if sel_type in {"description", "content-desc", "accessibility_id"}:
+            return f"""{indent}driver.find_element(AppiumBy.ACCESSIBILITY_ID, {json.dumps(sel_val)}).click()"""
+
+        return f"""{indent}driver.find_element(AppiumBy.XPATH, {json.dumps(sel_val)}).click()"""
 
     @classmethod
     def generate_test(cls, app_name: str, screens: list[dict]) -> str:

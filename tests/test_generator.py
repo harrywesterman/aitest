@@ -39,8 +39,17 @@ def test_action_code_click_text():
     code = TestGenerator._action_code({
         "type": "tap", "selector_type": "text", "selector_value": "Submit"
     })
-    assert 'AppiumBy.XPATH' in code
+    assert 'AppiumBy.ANDROID_UIAUTOMATOR' in code
     assert 'Submit' in code
+    assert '.click()' in code
+
+
+def test_action_code_click_description():
+    code = TestGenerator._action_code({
+        "type": "tap", "selector_type": "description", "selector_value": "Submit button"
+    })
+    assert 'AppiumBy.ACCESSIBILITY_ID' in code
+    assert 'Submit button' in code
     assert '.click()' in code
 
 
@@ -53,6 +62,16 @@ def test_action_code_type():
     assert 'input_email' in code
     assert 'test@example.com' in code
     assert '.clear()' in code
+
+
+def test_action_code_type_description():
+    code = TestGenerator._action_code({
+        "type": "type", "selector_type": "accessibility_id",
+        "selector_value": "Search field", "value": "hello"
+    })
+    assert 'AppiumBy.ACCESSIBILITY_ID' in code
+    assert 'Search field' in code
+    assert 'hello' in code
 
 
 def test_action_code_no_selector_falls_back():

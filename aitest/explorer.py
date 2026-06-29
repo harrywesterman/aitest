@@ -13,7 +13,7 @@ Return ONLY valid JSON (no markdown, no code fences):
   "description": "what this screen does",
   "elements": [
     {
-      "selector_type": "id | xpath | text",
+      "selector_type": "id | xpath | text | description | accessibility_id",
       "selector_value": "the selector value",
       "assertion": "Appium assertion code using AppiumBy"
     }
@@ -32,13 +32,14 @@ Guidelines:
 - IGNORE dynamic values like: times (e.g. 05:10, 22:00:19), dates, counters
 - Use "id" (resource-id) for selector_type when available in XML
 - Use "text" for matching by visible text (e.g. the text attribute)
+- Use "description" or "accessibility_id" for content-desc / accessibility labels when available
 - Use "xpath" for selector_type for complex matches
-- Prefer AppiumBy.ANDROID_UIAUTOMATOR with UiSelector() for text-based elements
+- Prefer AppiumBy.ACCESSIBILITY_ID for content-desc elements, and AppiumBy.ANDROID_UIAUTOMATOR with UiSelector().text(...) for visible labels
 - Your action MUST explore the app: tap tabs, tap buttons, tap menu items
 - NEVER use "back" or "terminate" when tabs or buttons are visible
 - Explore at least 3-4 different screens before terminating
 - DO NOT test for text that looks like a time (HH:MM or HH:MM:SS) or dates
-- For assertions, use: assert driver.find_element(AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().text(\"TEXT\")').is_displayed()"""
+- For assertions, prefer content-desc / accessibility labels for clickable controls, and visible text for static labels when that is the stable identifier"""
 
 
 class ExplorerAgent:
@@ -171,6 +172,9 @@ class ExplorerAgent:
             "id": AppiumBy.ID,
             "xpath": AppiumBy.XPATH,
             "text": AppiumBy.XPATH,
+            "description": AppiumBy.ACCESSIBILITY_ID,
+            "content-desc": AppiumBy.ACCESSIBILITY_ID,
+            "accessibility_id": AppiumBy.ACCESSIBILITY_ID,
             "uiautomator": AppiumBy.ANDROID_UIAUTOMATOR,
         }
         by = by_map.get(sel_type, AppiumBy.XPATH)

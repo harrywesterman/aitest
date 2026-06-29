@@ -1,5 +1,6 @@
 import json
 from unittest.mock import patch, MagicMock
+from appium.webdriver.common.appiumby import AppiumBy
 from aitest.explorer import ExplorerAgent
 
 
@@ -88,3 +89,32 @@ def test_analyze_screen_llm_error_ends(mock_llm_cls):
 
     assert result["action"]["type"] == "back"
     assert result["is_end_state"] is True
+
+
+@patch("aitest.explorer.LLMClient")
+def test_do_action_uses_accessibility_id(mock_llm_cls):
+    mock_client = MagicMock()
+    mock_llm_cls.return_value = mock_client
+
+    explorer = ExplorerAgent(llm_url="http://localhost:11434/v1")
+    driver = MagicMock()
+    element = MagicMock()
+    driver.find_element.return_value = element
+
+    result = explorer._do_action(
+        driver,
+        {
+            "action": {
+                "type": "tap",
+                "selector_type": "description",
+                "selector_value": "Submit button",
+            }
+        },
+    )
+
+    assert result is True
+    driver.find_element.assert_called_once()
+    args, kwargs = driver.find_element.call_args
+    assert args[0] == AppiumBy.ACCESSIBILITY_ID
+    assert args[1] == "Submit button"
+    element.click.assert_called_once()
