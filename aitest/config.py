@@ -2,6 +2,10 @@ import yaml
 from pathlib import Path
 from dataclasses import dataclass, field
 
+
+class ConfigError(Exception):
+    pass
+
 @dataclass
 class LLMConfig:
     url: str = "http://localhost:11434/v1"
@@ -29,9 +33,14 @@ class Config:
         path = path or "aitest.yaml"
         cfg_file = Path(path)
         if not cfg_file.exists():
+            if path != "aitest.yaml":
+                raise ConfigError(f"config file not found: {path}")
             return cls()
         with open(cfg_file) as f:
-            data = yaml.safe_load(f) or {}
+            try:
+                data = yaml.safe_load(f) or {}
+            except yaml.YAMLError as e:
+                raise ConfigError(f"invalid YAML in {path}: {e}") from e
         llm_data = data.get("llm", {})
         devices_data = data.get("devices", [])
         notify_data = data.get("notify", {})

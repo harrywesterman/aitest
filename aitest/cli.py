@@ -1,7 +1,7 @@
 import subprocess
 import typer
 from pathlib import Path
-from .config import Config
+from .config import Config, ConfigError
 from .device import DeviceManager
 from .explorer import ExplorerAgent
 from .generator import TestGenerator
@@ -9,7 +9,15 @@ from .runner import TestRunner
 from .healer import Healer
 from .notifier import Notifier
 
-app = typer.Typer()
+app = typer.Typer(pretty_exceptions_short=True, pretty_exceptions_show_locals=False)
+
+
+def _load_config(config_file: str) -> Config:
+    try:
+        return Config.load(config_file)
+    except ConfigError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -19,7 +27,7 @@ def explore(
     config_file: str = typer.Option("aitest.yaml", "--config", "-c"),
 ):
     """Explore an Android device and generate test scripts"""
-    cfg = Config.load(config_file)
+    cfg = _load_config(config_file)
     dm = DeviceManager(cfg.devices)
     configured = [d for d in cfg.devices if d.serial]
     devices = (
@@ -33,10 +41,156 @@ def explore(
     serial = devices[0].serial
     port = dm.start_appium(serial)
 
-    if not app_package:
+    if not app_package and not all_apps:
         typer.echo("No app specified (use --app or --all)")
         raise typer.Exit(1)
 
+    if all_apps:
+        result = subprocess.run(
+            ["adb", "-s", serial, "shell", "pm", "list", "packages", "-3"],
+            capture_output=True, text=True,
+        )
+        candidates = [
+            line.split(":", 1)[1].strip()
+            for line in result.stdout.strip().split("\n")
+            if ":" in line
+        ]
+        typer.echo(f"Checking {len(candidates)} third-party package(s) for launchable activities...")
+        packages = []
+        for pkg in candidates:
+            check = subprocess.run(
+                ["adb", "-s", serial, "shell", "pm", "resolve-activity", "--brief", pkg],
+                capture_output=True, text=True,
+            )
+            if check.returncode == 0 and check.stdout.strip():
+                packages.append(pkg)
+        if not packages:
+            typer.echo("No apps with launchable activities found", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"Found {len(packages)} app(s) with launchable activities")
+        for i, pkg in enumerate(packages[:10], 1):
+            typer.echo(f"\n[{i}/{min(len(packages), 10)}] Exploring {pkg}...")
+            try:
+                _explore_app(cfg, serial, port, pkg)
+            except Exception as e:
+                typer.echo(f"  Skipping {pkg}: {e}", err=True)
+        if len(packages) > 10:
+            typer.echo(f"\n{len(packages) - 10} remaining app(s) skipped. Use --app for specific apps.")
+        return
+
+    _explore_app(cfg, serial, port, app_package)
+
+    _explore_app(cfg, serial, port, app_package)
+
+
+@app.command()
+def run(
+    device: str = typer.Option("", "--device", "-d", help="Device serial"),
+    config_file: str = typer.Option("aitest.yaml", "--config", "-c"),
+):
+    """Run the test suite on connected devices"""
+    cfg = _load_config(config_file)
+    dm = DeviceManager(cfg.devices)
+    configured = [d for d in cfg.devices if d.serial]
+    devices = (
+        dm.discover()
+        if not configured
+        else configured
+    )
+    if device:
+        devices = [d for d in devices if d.serial == device]
+    if not devices:
+        typer.echo("No devices found", err=True)
+        raise typer.Exit(1)
+    serial = devices[0].serial
+    dm.start_appium(serial)
+    runner = TestRunner(devices)
+    results = runner.run_all()
+    notifier = Notifier(cfg.notify.webhook)
+    failed = notifier.summary(results)
+    if failed:
+        raise typer.Exit(1)
+
+
+@app.command()
+def heal(
+    test_path: str = typer.Argument(..., help="Test file to heal"),
+    config_file: str = typer.Option("aitest.yaml", "--config", "-c"),
+):
+    """Use AI to fix a failing test"""
+    test_path = Path(test_path)
+    if not test_path.exists():
+        typer.echo(f"Test file not found: {test_path}", err=True)
+        raise typer.Exit(1)
+
+    cfg = _load_config(config_file)
+    healer_agent = Healer(cfg.llm.url, cfg.llm.key, cfg.llm.model)
+    typer.echo(f"Analyzing {test_path}...")
+
+    test_code = test_path.read_text()
+    import re
+    selectors = re.findall(r'["\']([^"\']{5,})["\']\s*\)', test_code)
+
+    if not selectors:
+        typer.echo("No selectors found to heal")
+        return
+
+    dm = DeviceManager(cfg.devices)
+    configured = [d for d in cfg.devices if d.serial]
+    devices = (
+        dm.discover()
+        if not configured
+        else configured
+    )
+    if not devices:
+        typer.echo("No devices found", err=True)
+        raise typer.Exit(1)
+    serial = devices[0].serial
+    port = dm.start_appium(serial)
+    typer.echo(f"Connecting to {serial}...")
+
+    from appium import webdriver
+    from appium.options.android import UiAutomator2Options
+
+    options = UiAutomator2Options()
+    options.platform_name = "Android"
+    options.automation_name = "UiAutomator2"
+    options.device_name = serial
+    options.no_reset = True
+
+    driver = webdriver.Remote(f"http://localhost:{port}", options=options)
+    page_source = driver.page_source
+
+    if not selectors:
+        typer.echo("No selectors found to heal")
+        driver.quit()
+        return
+
+    typer.echo(f"Found {len(selectors)} selector(s). Healing...")
+    for sel in selectors:
+        new_sel = healer_agent.heal_selector(sel, page_source)
+        if new_sel and new_sel != sel:
+            typer.echo(f"  {sel} -> {new_sel}")
+            test_code = test_code.replace(sel, new_sel)
+
+    Path(test_path).write_text(test_code)
+    driver.quit()
+    typer.echo("Healing complete")
+
+
+@app.command()
+def devices():
+    """List connected Android devices"""
+    dm = DeviceManager()
+    found = dm.discover()
+    if not found:
+        typer.echo("No devices connected")
+        return
+    for d in found:
+        typer.echo(f"  {d.serial}")
+
+
+def _explore_app(cfg, serial, port, app_package):
     typer.echo(f"Launching {app_package} on {serial}...")
 
     activity_result = subprocess.run(
@@ -91,11 +245,6 @@ def explore(
     conftest = out_dir / "conftest.py"
     if not conftest.exists():
         conftest.write_text(
-            'import pytest\n'
-            'from appium import webdriver\n'
-            'from appium.options.android import UiAutomator2Options\n'
-            '\n'
-            '\n'
             'import os\n'
             'import pytest\n'
             'from appium import webdriver\n'
@@ -118,102 +267,6 @@ def explore(
     out_file = out_dir / f"test_{safe_name}.py"
     out_file.write_text(code)
     typer.echo(f"Generated: {out_file}")
-
-
-@app.command()
-def run(
-    device: str = typer.Option("", "--device", "-d", help="Device serial"),
-    config_file: str = typer.Option("aitest.yaml", "--config", "-c"),
-):
-    """Run the test suite on connected devices"""
-    cfg = Config.load(config_file)
-    dm = DeviceManager(cfg.devices)
-    configured = [d for d in cfg.devices if d.serial]
-    devices = (
-        dm.discover()
-        if not configured
-        else configured
-    )
-    if device:
-        devices = [d for d in devices if d.serial == device]
-    if not devices:
-        typer.echo("No devices found", err=True)
-        raise typer.Exit(1)
-    runner = TestRunner(devices)
-    results = runner.run_all()
-    notifier = Notifier(cfg.notify.webhook)
-    failed = notifier.summary(results)
-    if failed:
-        raise typer.Exit(1)
-
-
-@app.command()
-def heal(
-    test_path: str = typer.Argument(..., help="Test file to heal"),
-    config_file: str = typer.Option("aitest.yaml", "--config", "-c"),
-):
-    """Use AI to fix a failing test"""
-    cfg = Config.load(config_file)
-    healer_agent = Healer(cfg.llm.url, cfg.llm.key, cfg.llm.model)
-    typer.echo(f"Analyzing {test_path}...")
-
-    dm = DeviceManager(cfg.devices)
-    configured = [d for d in cfg.devices if d.serial]
-    devices = (
-        dm.discover()
-        if not configured
-        else configured
-    )
-    if not devices:
-        typer.echo("No devices found", err=True)
-        raise typer.Exit(1)
-    serial = devices[0].serial
-    port = dm.start_appium(serial)
-    typer.echo(f"Connecting to {serial}...")
-
-    from appium import webdriver
-    from appium.options.android import UiAutomator2Options
-
-    options = UiAutomator2Options()
-    options.platform_name = "Android"
-    options.automation_name = "UiAutomator2"
-    options.device_name = serial
-    options.no_reset = True
-
-    driver = webdriver.Remote(f"http://localhost:{port}", options=options)
-    page_source = driver.page_source
-
-    test_code = Path(test_path).read_text()
-    import re
-    selectors = re.findall(r'["\']([^"\']{5,})["\']\s*\)', test_code)
-
-    if not selectors:
-        typer.echo("No selectors found to heal")
-        driver.quit()
-        return
-
-    typer.echo(f"Found {len(selectors)} selector(s). Healing...")
-    for sel in selectors:
-        new_sel = healer_agent.heal_selector(sel, page_source)
-        if new_sel and new_sel != sel:
-            typer.echo(f"  {sel} -> {new_sel}")
-            test_code = test_code.replace(sel, new_sel)
-
-    Path(test_path).write_text(test_code)
-    driver.quit()
-    typer.echo("Healing complete")
-
-
-@app.command()
-def devices():
-    """List connected Android devices"""
-    dm = DeviceManager()
-    found = dm.discover()
-    if not found:
-        typer.echo("No devices connected")
-        return
-    for d in found:
-        typer.echo(f"  {d.serial}")
 
 
 if __name__ == "__main__":
