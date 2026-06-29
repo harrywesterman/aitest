@@ -135,9 +135,9 @@ def run(
         raise typer.Exit(1)
     runner = TestRunner(devices)
     results = runner.run_all()
-    notifier = Notifier(cfg.notify.webhook if hasattr(cfg, "notify") else "")
-    notifier.summary(results)
-    if any(not r["passed"] for r in results.values()):
+    notifier = Notifier(cfg.notify.webhook)
+    failed = notifier.summary(results)
+    if failed:
         raise typer.Exit(1)
 
 
@@ -150,6 +150,51 @@ def heal(
     cfg = Config.load(config_file)
     healer_agent = Healer(cfg.llm.url, cfg.llm.key, cfg.llm.model)
     typer.echo(f"Analyzing {test_path}...")
+
+    dm = DeviceManager(cfg.devices)
+    configured = [d for d in cfg.devices if d.serial]
+    devices = (
+        dm.discover()
+        if not configured
+        else [{"serial": d.serial} for d in configured]
+    )
+    if not devices:
+        typer.echo("No devices found", err=True)
+        raise typer.Exit(1)
+    serial = devices[0]["serial"]
+    port = dm.start_appium(serial)
+    typer.echo(f"Connecting to {serial}...")
+
+    from appium import webdriver
+    from appium.options.android import UiAutomator2Options
+
+    options = UiAutomator2Options()
+    options.platform_name = "Android"
+    options.automation_name = "UiAutomator2"
+    options.device_name = serial
+    options.no_reset = True
+
+    driver = webdriver.Remote(f"http://localhost:{port}", options=options)
+    page_source = driver.page_source
+
+    test_code = Path(test_path).read_text()
+    import re
+    selectors = re.findall(r'["\']([^"\']{5,})["\']\s*\)', test_code)
+
+    if not selectors:
+        typer.echo("No selectors found to heal")
+        driver.quit()
+        return
+
+    typer.echo(f"Found {len(selectors)} selector(s). Healing...")
+    for sel in selectors:
+        new_sel = healer_agent.heal_selector(sel, page_source)
+        if new_sel and new_sel != sel:
+            typer.echo(f"  {sel} -> {new_sel}")
+            test_code = test_code.replace(sel, new_sel)
+
+    Path(test_path).write_text(test_code)
+    driver.quit()
     typer.echo("Healing complete")
 
 

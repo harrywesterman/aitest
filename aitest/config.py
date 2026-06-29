@@ -15,9 +15,14 @@ class DeviceConfig:
     port: int = 4723
 
 @dataclass
+class NotifyConfig:
+    webhook: str = ""
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     devices: list[DeviceConfig] = field(default_factory=list)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
 
     @classmethod
     def load(cls, path: str | None = None) -> "Config":
@@ -29,7 +34,9 @@ class Config:
             data = yaml.safe_load(f) or {}
         llm_data = data.get("llm", {})
         devices_data = data.get("devices", [])
+        notify_data = data.get("notify", {})
         return cls(
             llm=LLMConfig(**llm_data),
             devices=[DeviceConfig(**d) for d in devices_data],
+            notify=NotifyConfig(**notify_data),
         )

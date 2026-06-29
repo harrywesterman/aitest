@@ -15,10 +15,10 @@ class Notifier:
                 json={"device": device, "test": test, "error": error},
             )
 
-    def summary(self, results: dict):
+    def summary(self, results: dict) -> int:
         failed = sum(1 for r in results.values() if not r["passed"])
         total = len(results)
         print(f"\nResults: {total - failed}/{total} passed")
         if failed:
             print(f"FAILURES: {failed} device(s) have failing tests", file=sys.stderr)
-            sys.exit(1)
+        return failed

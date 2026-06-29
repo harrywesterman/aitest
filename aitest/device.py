@@ -26,7 +26,7 @@ class DeviceManager:
             raise ValueError("serial is required")
 
         if self._port_in_use(port):
-            return port
+            port = self._find_free_port(port + 1)
 
         env = {**os.environ, "ANDROID_HOME": os.environ.get("ANDROID_HOME", "/opt/homebrew/share/android-commandlinetools")}
         subprocess.Popen(

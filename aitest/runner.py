@@ -11,7 +11,7 @@ class TestRunner:
         results = {}
         for device in self.devices:
             serial = device["serial"]
-            env = {**dict(ANDROID_SERIAL=serial)}
+            env = {**os.environ, "ANDROID_SERIAL": serial}
             result = subprocess.run(
                 [
                     sys.executable,
