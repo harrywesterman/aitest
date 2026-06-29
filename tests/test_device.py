@@ -49,6 +49,20 @@ def test_start_appium_requires_serial():
         dm.start_appium("")
 
 
+@patch("aitest.device.subprocess.Popen")
+@patch("aitest.device.DeviceManager._appium_ready")
+@patch("aitest.device.DeviceManager._port_in_use")
+def test_start_appium_reuses_running_server(mock_port_in_use, mock_ready, mock_popen):
+    mock_port_in_use.return_value = True
+    mock_ready.return_value = True
+
+    dm = DeviceManager()
+    port = dm.start_appium("abc", 4723)
+
+    assert port == 4723
+    mock_popen.assert_not_called()
+
+
 def test_port_in_use():
     dm = DeviceManager()
     # unlikely to be in use on a random high port

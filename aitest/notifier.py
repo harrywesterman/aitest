@@ -21,4 +21,11 @@ class Notifier:
         print(f"\nResults: {total - failed}/{total} passed")
         if failed:
             print(f"FAILURES: {failed} device(s) have failing tests", file=sys.stderr)
+            for serial, r in results.items():
+                if not r["passed"]:
+                    print(f"\n  Device: {serial}", file=sys.stderr)
+                    if r.get("stdout"):
+                        print(f"  Output:\n{r['stdout']}", file=sys.stderr)
+                    if r.get("stderr"):
+                        print(f"  Errors:\n{r['stderr']}", file=sys.stderr)
         return failed

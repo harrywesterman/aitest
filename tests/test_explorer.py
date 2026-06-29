@@ -21,9 +21,9 @@ SAMPLE_XML = """<?xml version="1.0"?>
 def test_compress_xml():
     result = ExplorerAgent._compress_xml(SAMPLE_XML)
     assert "LinearLayout" in result
-    assert "id=\"header\"" in result
+    assert "id=\"com.app:id/header\"" in result
     assert "text=\"Welcome\"" in result
-    assert "id=\"submit\"" in result
+    assert "id=\"com.app:id/submit\"" in result
     assert "text=\"Submit\"" in result
     assert "clickable" in result
     assert "desc=\"Submit button\"" in result

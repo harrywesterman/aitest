@@ -2,6 +2,8 @@ import os
 import subprocess
 import socket
 import time
+import urllib.error
+import urllib.request
 from .config import DeviceConfig
 
 
@@ -28,6 +30,8 @@ class DeviceManager:
             raise ValueError("serial is required")
 
         if self._port_in_use(port):
+            if self._appium_ready(port):
+                return port
             port = self._find_free_port(port + 1)
 
         env = {**os.environ, "ANDROID_HOME": os.environ.get("ANDROID_HOME", "/opt/homebrew/share/android-commandlinetools")}
@@ -62,8 +66,15 @@ class DeviceManager:
     def _wait_for_appium(port: int, timeout: int = 15) -> bool:
         start = time.time()
         while time.time() - start < timeout:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                if s.connect_ex(("127.0.0.1", port)) == 0:
-                    return True
+            if DeviceManager._appium_ready(port):
+                return True
             time.sleep(0.5)
         return False
+
+    @staticmethod
+    def _appium_ready(port: int) -> bool:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=1) as response:
+                return response.status == 200
+        except (OSError, urllib.error.URLError):
+            return False

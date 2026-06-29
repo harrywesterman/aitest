@@ -98,8 +98,7 @@ class ExplorerAgent:
                 elif k == "content-desc" and v:
                     kept.append(f"desc=\"{v}\"")
                 elif k == "resource-id" and v:
-                    rid = v.split("/")[-1] if "/" in v else v
-                    kept.append(f"id=\"{rid}\"")
+                    kept.append(f"id=\"{v}\"")
                 elif k == "text" and v:
                     kept.append(f"text=\"{v}\"")
                 elif k in ("clickable", "checkable", "scrollable") and v == "true" and k not in seen_flags:

@@ -23,4 +23,5 @@ testpaths = ["tests"]
 markers = [
     "integration: marks tests that require a live LLM server (deselect with '-m \"not integration\"')",
     "appium: marks tests that require a live Appium server (deselect with '-m \"not appium\"')",
+    "app(package, activity): launches an Android app before running an Appium test",
 ]

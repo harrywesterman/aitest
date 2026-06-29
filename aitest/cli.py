@@ -39,7 +39,7 @@ def explore(
         typer.echo("No devices found", err=True)
         raise typer.Exit(1)
     serial = devices[0].serial
-    port = dm.start_appium(serial)
+    port = dm.start_appium(serial, devices[0].port)
 
     if not app_package and not all_apps:
         typer.echo("No app specified (use --app or --all)")
@@ -103,8 +103,8 @@ def run(
         typer.echo("No devices found", err=True)
         raise typer.Exit(1)
     serial = devices[0].serial
-    dm.start_appium(serial)
-    runner = TestRunner(devices)
+    port = dm.start_appium(serial, devices[0].port)
+    runner = TestRunner(devices, appium_url=f"http://localhost:{port}")
     results = runner.run_all()
     notifier = Notifier(cfg.notify.webhook)
     failed = notifier.summary(results)
@@ -146,7 +146,7 @@ def heal(
         typer.echo("No devices found", err=True)
         raise typer.Exit(1)
     serial = devices[0].serial
-    port = dm.start_appium(serial)
+    port = dm.start_appium(serial, devices[0].port)
     typer.echo(f"Connecting to {serial}...")
 
     from appium import webdriver
@@ -246,25 +246,66 @@ def _explore_app(cfg, serial, port, app_package):
     if not conftest.exists():
         conftest.write_text(
             'import os\n'
+            'import subprocess\n'
             'import pytest\n'
             'from appium import webdriver\n'
             'from appium.options.android import UiAutomator2Options\n'
             '\n'
             '\n'
             '@pytest.fixture\n'
-            'def driver():\n'
+            'def driver(request):\n'
+            '    serial = os.getenv("ANDROID_SERIAL", "device")\n'
+            '    subprocess.run(["adb", "-s", serial, "shell", "svc", "power", "stayon", "true"], capture_output=True)\n'
+            '    subprocess.run(["adb", "-s", serial, "shell", "settings", "put", "system", "screen_off_timeout", "1800000"], capture_output=True)\n'
+            '    subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP"], capture_output=True)\n'
+            '    subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "KEYCODE_HOME"], capture_output=True)\n'
+            '    subprocess.run(["adb", "-s", serial, "shell", "wm", "dismiss-keyguard"], capture_output=True)\n'
+            '    marker = request.node.get_closest_marker("app")\n'
+            '    if marker:\n'
+            '        app_package = marker.args[0]\n'
+            '        activity = marker.args[1] if len(marker.args) > 1 and marker.args[1] else ""\n'
+            '        if activity:\n'
+            '            subprocess.run(\n'
+            '                ["adb", "-s", serial, "shell", "am", "start", "-n", f"{app_package}/{activity}"],\n'
+            '                capture_output=True,\n'
+            '            )\n'
+            '        else:\n'
+            '            subprocess.run(\n'
+            '                ["adb", "-s", serial, "shell", "monkey", "-p", app_package, "-c", "android.intent.category.LAUNCHER", "1"],\n'
+            '                capture_output=True,\n'
+            '            )\n'
             '    options = UiAutomator2Options()\n'
             '    options.platform_name = "Android"\n'
             '    options.automation_name = "UiAutomator2"\n'
-            '    options.device_name = os.getenv("ANDROID_SERIAL", "device")\n'
+            '    options.device_name = serial\n'
+            '    if marker:\n'
+            '        options.app_package = marker.args[0]\n'
+            '        if len(marker.args) > 1 and marker.args[1]:\n'
+            '            options.app_activity = marker.args[1]\n'
             '    options.no_reset = True\n'
-            '    driver = webdriver.Remote("http://localhost:4723", options=options)\n'
-            '    yield driver\n'
-            '    driver.quit()\n'
+            '    driver = webdriver.Remote(os.getenv("APPIUM_URL", "http://localhost:4723"), options=options)\n'
+            '    try:\n'
+            '        yield driver\n'
+            '    finally:\n'
+            '        subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "KEYCODE_HOME"], capture_output=True)\n'
+            '        try:\n'
+            '            driver.quit()\n'
+            '        except Exception:\n'
+            '            pass\n'
         )
         typer.echo(f"Created: {conftest}")
     safe_name = app_package.replace(".", "_")
     out_file = out_dir / f"test_{safe_name}.py"
+    lines = code.split("\n")
+    marker_line = f'@pytest.mark.app("{app_package}"'
+    if app_activity:
+        marker_line += f', "{app_activity}"'
+    marker_line += ")"
+    for i, line in enumerate(lines):
+        if line.startswith("class Test") and lines[i - 1] != marker_line:
+            lines.insert(i, marker_line)
+            break
+    code = "\n".join(lines)
     out_file.write_text(code)
     typer.echo(f"Generated: {out_file}")
 

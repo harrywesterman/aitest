@@ -134,6 +134,8 @@ notify:
 aitest devices
 ```
 
+> ⚠️ `aitest` is alleen beschikbaar nadat je het package hebt geïnstalleerd met `pip install -e .` (stap 2 hierboven). Zonder installatie krijg je `command not found`.
+
 Example output:
 ```
   4a0aeefb

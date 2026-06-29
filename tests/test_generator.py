@@ -64,3 +64,22 @@ def test_generate_class_name():
     gen = TestGenerator()
     code = gen.generate_test("com.android.deskclock", [{"description": "screen", "elements": [], "action": {"type": "terminate"}}])
     assert "TestComAndroidDeskclock" in code
+
+
+def test_generate_normalizes_short_resource_ids():
+    gen = TestGenerator()
+    code = gen.generate_test(
+        "com.example.app",
+        [
+            {
+                "description": "screen",
+                "elements": [
+                    {"assertion": "assert driver.find_element(AppiumBy.ID, 'submit').is_displayed()"}
+                ],
+                "action": {"type": "tap", "selector_type": "id", "selector_value": "next"},
+            },
+            {"description": "next", "elements": [], "action": {"type": "terminate"}},
+        ],
+    )
+    assert "com.example.app:id/submit" in code
+    assert "com.example.app:id/next" in code
