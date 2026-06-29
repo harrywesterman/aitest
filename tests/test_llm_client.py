@@ -21,6 +21,8 @@ def test_chat_requires_messages():
 
 @pytest.mark.integration
 def test_chat_real():
-    client = LLMClient(url="http://localhost:11434/v1", model="qwen2.5:7b")
+    from aitest.config import Config
+    cfg = Config.load()
+    client = LLMClient(url=cfg.llm.url, key=cfg.llm.key, model=cfg.llm.model)
     response = client.chat([{"role": "user", "content": "Say hello"}])
     assert len(response) > 0
