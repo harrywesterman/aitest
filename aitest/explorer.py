@@ -1,7 +1,10 @@
 import json
+import logging
 import re
 import time
 from .llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
 
 EXPLORER_SYSTEM_PROMPT = """You are an Android test engineer exploring an app. You are given the XML page source.
 
@@ -41,17 +44,17 @@ Guidelines:
 class ExplorerAgent:
     def __init__(self, llm_url: str, llm_key: str = "", model: str = "qwen2.5:7b"):
         self.llm_client = LLMClient(url=llm_url, key=llm_key, model=model)
-        self.llm = self.llm_client
         self.max_screens = 10
+        self._poll_interval = 0.5
 
     def explore_app(self, driver, app_package: str) -> list[dict]:
         screens = []
         seen = set()
 
-        time.sleep(3)
+        self._wait_for_screen(driver)
 
         for step in range(self.max_screens):
-            time.sleep(1)
+            self._wait_for_screen(driver)
             page_source = driver.page_source
             compressed = self._compress_xml(page_source)
 
@@ -80,8 +83,8 @@ class ExplorerAgent:
         for line in lines:
             if all(f"{a}=\"" not in line for a in attrs_keep):
                 continue
-            pairs = re.findall(r'(\w+)=["\']([^"\']*)["\']', line)
-            tag = re.match(r'\s*<(\w+\.\w+)', line)
+            pairs = re.findall(r'([-\w.]+)=["\']([^"\']*)["\']', line)
+            tag = re.match(r'\s*<([^>\s]+)', line)
             if not tag:
                 continue
             cls_name = tag.group(1).split(".")[-1]
@@ -129,12 +132,21 @@ class ExplorerAgent:
             text = self._strip_markdown(text)
             parsed = json.loads(text)
             return parsed
-        except (json.JSONDecodeError, Exception) as e:
+        except json.JSONDecodeError:
+            logger.warning("LLM returned invalid JSON, navigating back")
             return {
-                "description": f"screen",
+                "description": "screen",
                 "elements": [],
                 "action": {"type": "back"},
                 "is_end_state": False,
+            }
+        except Exception as e:
+            logger.error("LLM call failed: %s", e)
+            return {
+                "description": "screen",
+                "elements": [],
+                "action": {"type": "back"},
+                "is_end_state": True,
             }
 
     def _do_action(self, driver, analysis: dict) -> bool:
@@ -174,8 +186,20 @@ class ExplorerAgent:
             else:
                 el = driver.find_element(by, sel_val)
                 el.click()
-            time.sleep(1)
+            time.sleep(self._poll_interval)
             return True
         except Exception:
             driver.back()
             return True
+
+    @staticmethod
+    def _wait_for_screen(driver, timeout: int = 10) -> None:
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                src = driver.page_source
+                if src and len(src) > 100:
+                    return
+            except Exception:
+                pass
+            time.sleep(0.3)

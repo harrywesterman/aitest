@@ -13,6 +13,14 @@ class TestGenerator:
         if not sel_val:
             return f"{indent}driver.back()"
 
+        if t == "type":
+            type_val = action.get("value", "")
+            if sel_type == "text":
+                return f"""{indent}el = driver.find_element(AppiumBy.XPATH, '//*[@text="{sel_val}"]'){indent}el.clear(){indent}el.send_keys("{type_val}")"""
+            if sel_type == "id":
+                return f"""{indent}el = driver.find_element(AppiumBy.ID, "{sel_val}"){indent}el.clear(){indent}el.send_keys("{type_val}")"""
+            return f"""{indent}el = driver.find_element(AppiumBy.XPATH, "{sel_val}"){indent}el.clear(){indent}el.send_keys("{type_val}")"""
+
         if sel_type == "text":
             return f"""{indent}driver.find_element(AppiumBy.XPATH, '//*[@text="{sel_val}"]').click()"""
 
@@ -32,7 +40,7 @@ class TestGenerator:
             "",
             "pytestmark = pytest.mark.appium",
             "",
-            f"class Test{safe.title()}:",
+            f"class Test{''.join(p.capitalize() for p in safe.split('_'))}:",
             f"    def test_{safe}(self, driver):",
         ]
 

@@ -25,12 +25,12 @@ def explore(
     devices = (
         dm.discover()
         if not configured
-        else [{"serial": d.serial} for d in configured]
+        else configured
     )
     if not devices:
         typer.echo("No devices found", err=True)
         raise typer.Exit(1)
-    serial = devices[0]["serial"]
+    serial = devices[0].serial
     port = dm.start_appium(serial)
 
     if not app_package:
@@ -96,12 +96,18 @@ def explore(
             'from appium.options.android import UiAutomator2Options\n'
             '\n'
             '\n'
+            'import os\n'
+            'import pytest\n'
+            'from appium import webdriver\n'
+            'from appium.options.android import UiAutomator2Options\n'
+            '\n'
+            '\n'
             '@pytest.fixture\n'
             'def driver():\n'
             '    options = UiAutomator2Options()\n'
             '    options.platform_name = "Android"\n'
             '    options.automation_name = "UiAutomator2"\n'
-            '    options.device_name = "device"\n'
+            '    options.device_name = os.getenv("ANDROID_SERIAL", "device")\n'
             '    options.no_reset = True\n'
             '    driver = webdriver.Remote("http://localhost:4723", options=options)\n'
             '    yield driver\n'
@@ -126,10 +132,10 @@ def run(
     devices = (
         dm.discover()
         if not configured
-        else [{"serial": d.serial} for d in configured]
+        else configured
     )
     if device:
-        devices = [d for d in devices if d["serial"] == device]
+        devices = [d for d in devices if d.serial == device]
     if not devices:
         typer.echo("No devices found", err=True)
         raise typer.Exit(1)
@@ -156,12 +162,12 @@ def heal(
     devices = (
         dm.discover()
         if not configured
-        else [{"serial": d.serial} for d in configured]
+        else configured
     )
     if not devices:
         typer.echo("No devices found", err=True)
         raise typer.Exit(1)
-    serial = devices[0]["serial"]
+    serial = devices[0].serial
     port = dm.start_appium(serial)
     typer.echo(f"Connecting to {serial}...")
 
@@ -207,7 +213,7 @@ def devices():
         typer.echo("No devices connected")
         return
     for d in found:
-        typer.echo(f"  {d['serial']}")
+        typer.echo(f"  {d.serial}")
 
 
 if __name__ == "__main__":

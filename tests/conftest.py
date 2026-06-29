@@ -1,14 +1,16 @@
+import os
 import pytest
+from appium import webdriver
 from appium.options.android import UiAutomator2Options
 
 
 @pytest.fixture
-def driver(driver):
+def driver():
     options = UiAutomator2Options()
     options.platform_name = "Android"
     options.automation_name = "UiAutomator2"
-    options.device_name = driver._device_name
-    options.app_package = "com.android.settings"
-    options.app_activity = ".Settings"
+    options.device_name = os.getenv("ANDROID_SERIAL", "device")
     options.no_reset = True
-    return webdriver.Remote("http://localhost:4723", options=options)
+    driver = webdriver.Remote("http://localhost:4723", options=options)
+    yield driver
+    driver.quit()
