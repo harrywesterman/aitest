@@ -1,29 +1,181 @@
 import json
+import re
+import time
 from .llm_client import LLMClient
 
-EXPLORER_PROMPT = """You are an Android test engineer. You are given the XML page source and a screenshot of the current screen.
+EXPLORER_SYSTEM_PROMPT = """You are an Android test engineer exploring an app. You are given the XML page source.
 
-1. List all interactive elements (buttons, text fields, lists, switches, etc.)
-2. For each element, write a pytest assertion to verify it exists
-3. Choose ONE action to take next (tap, type, swipe, back) that advances the flow
-4. If this is a login form, generate code to fill in credentials
-
-Return JSON:
+Return ONLY valid JSON (no markdown, no code fences):
 {
-  "elements": [{"selector": "xpath or id", "assertion": "code"}],
-  "action": {"type": "tap|type|swipe|back", "target": "selector", "value": ""},
-  "description": "what this screen does"
-}"""
+  "description": "what this screen does",
+  "elements": [
+    {
+      "selector_type": "id | xpath | text",
+      "selector_value": "the selector value",
+      "assertion": "Appium assertion code using AppiumBy"
+    }
+  ],
+  "action": {
+    "type": "tap | type | back | terminate",
+    "selector_type": "id | xpath | text",
+    "selector_value": "element to interact with",
+    "value": "text to type if type action"
+  },
+  "is_end_state": false
+}
+
+Guidelines:
+- Write assertions for STABLE UI elements only (labels, buttons, tabs, menu items)
+- IGNORE dynamic values like: times (e.g. 05:10, 22:00:19), dates, counters
+- Use "id" (resource-id) for selector_type when available in XML
+- Use "text" for matching by visible text (e.g. the text attribute)
+- Use "xpath" for selector_type for complex matches
+- Prefer AppiumBy.ANDROID_UIAUTOMATOR with UiSelector() for text-based elements
+- Your action MUST explore the app: tap tabs, tap buttons, tap menu items
+- NEVER use "back" or "terminate" when tabs or buttons are visible
+- Explore at least 3-4 different screens before terminating
+- DO NOT test for text that looks like a time (HH:MM or HH:MM:SS) or dates
+- For assertions, use: assert driver.find_element(AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().text(\"TEXT\")').is_displayed()"""
 
 
 class ExplorerAgent:
     def __init__(self, llm_url: str, llm_key: str = "", model: str = "qwen2.5:7b"):
         self.llm_client = LLMClient(url=llm_url, key=llm_key, model=model)
+        self.llm = self.llm_client
+        self.max_screens = 10
 
-    def analyze_screen(self, page_source: str, screenshot_b64: str = "") -> dict:
+    def explore_app(self, driver, app_package: str) -> list[dict]:
+        screens = []
+        seen = set()
+
+        time.sleep(3)
+
+        for step in range(self.max_screens):
+            time.sleep(1)
+            page_source = driver.page_source
+            compressed = self._compress_xml(page_source)
+
+            h = hash(compressed)
+            if h in seen:
+                break
+            seen.add(h)
+
+            analysis = self.analyze_screen(page_source, app_package, compressed)
+            analysis["step"] = step
+            screens.append(analysis)
+
+            if analysis.get("is_end_state"):
+                break
+
+            if not self._do_action(driver, analysis):
+                break
+
+        return screens
+
+    @staticmethod
+    def _compress_xml(page_source: str) -> str:
+        attrs_keep = {"resource-id", "text", "content-desc", "clickable", "checkable", "scrollable", "class"}
+        lines = page_source.split("\n")
+        out = []
+        for line in lines:
+            if all(f"{a}=\"" not in line for a in attrs_keep):
+                continue
+            pairs = re.findall(r'(\w+)=["\']([^"\']*)["\']', line)
+            tag = re.match(r'\s*<(\w+\.\w+)', line)
+            if not tag:
+                continue
+            cls_name = tag.group(1).split(".")[-1]
+            kept = [f"<{cls_name}"]
+            seen_flags = set()
+            for k, v in pairs:
+                if k not in attrs_keep or not v:
+                    continue
+                if k == "class":
+                    kept.append(f"class={v.split('.')[-1]}")
+                elif k == "content-desc" and v:
+                    kept.append(f"desc=\"{v}\"")
+                elif k == "resource-id" and v:
+                    rid = v.split("/")[-1] if "/" in v else v
+                    kept.append(f"id=\"{rid}\"")
+                elif k == "text" and v:
+                    kept.append(f"text=\"{v}\"")
+                elif k in ("clickable", "checkable", "scrollable") and v == "true" and k not in seen_flags:
+                    kept.append(k)
+                    seen_flags.add(k)
+            kept.append(">")
+            out.append(" ".join(kept))
+        return "\n".join(out[:80])
+
+    @staticmethod
+    def _strip_markdown(text: str) -> str:
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[:-3].strip()
+        if text.startswith("json"):
+            text = text[4:].strip()
+        return text
+
+    def analyze_screen(self, page_source: str, app_package: str = "", compressed: str = "") -> dict:
+        if not compressed:
+            compressed = self._compress_xml(page_source)
         messages = [
-            {"role": "system", "content": EXPLORER_PROMPT},
-            {"role": "user", "content": f"Page source:\n{page_source[:4000]}"},
+            {"role": "system", "content": EXPLORER_SYSTEM_PROMPT},
+            {"role": "user", "content": f"App package: {app_package}\n\nPage source:\n{compressed}"},
         ]
-        result = self.llm_client.chat(messages)
-        return json.loads(result)
+        try:
+            text = self.llm_client.chat(messages, temperature=0.1)
+            text = self._strip_markdown(text)
+            parsed = json.loads(text)
+            return parsed
+        except (json.JSONDecodeError, Exception) as e:
+            return {
+                "description": f"screen",
+                "elements": [],
+                "action": {"type": "back"},
+                "is_end_state": False,
+            }
+
+    def _do_action(self, driver, analysis: dict) -> bool:
+        from appium.webdriver.common.appiumby import AppiumBy
+
+        action = analysis.get("action", {})
+        t = action.get("type", "back")
+
+        if t == "terminate":
+            return False
+        if t == "back":
+            driver.back()
+            return True
+
+        sel_type = action.get("selector_type", "xpath")
+        sel_val = action.get("selector_value", "")
+
+        if not sel_val:
+            driver.back()
+            return True
+
+        by_map = {
+            "id": AppiumBy.ID,
+            "xpath": AppiumBy.XPATH,
+            "text": AppiumBy.XPATH,
+            "uiautomator": AppiumBy.ANDROID_UIAUTOMATOR,
+        }
+        by = by_map.get(sel_type, AppiumBy.XPATH)
+        if sel_type == "text":
+            sel_val = f"//*[@text='{sel_val}']"
+
+        try:
+            if t == "type":
+                el = driver.find_element(by, sel_val)
+                el.clear()
+                el.send_keys(action.get("value", ""))
+            else:
+                el = driver.find_element(by, sel_val)
+                el.click()
+            time.sleep(1)
+            return True
+        except Exception:
+            driver.back()
+            return True

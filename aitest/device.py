@@ -1,3 +1,4 @@
+import os
 import subprocess
 import socket
 import time
@@ -23,14 +24,24 @@ class DeviceManager:
     def start_appium(self, serial: str, port: int = 4723) -> int:
         if not serial:
             raise ValueError("serial is required")
-        appium_port = self._find_free_port(port)
+
+        if self._port_in_use(port):
+            return port
+
+        env = {**os.environ, "ANDROID_HOME": os.environ.get("ANDROID_HOME", "/opt/homebrew/share/android-commandlinetools")}
         subprocess.Popen(
-            ["appium", "-p", str(appium_port), "--relaxed-security"],
+            ["appium", "-p", str(port), "--relaxed-security"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=env,
         )
-        time.sleep(3)
-        return appium_port
+        time.sleep(5)
+        return port
+
+    @staticmethod
+    def _port_in_use(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(("127.0.0.1", port)) == 0
 
     @staticmethod
     def _find_free_port(start: int) -> int:

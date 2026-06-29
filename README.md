@@ -49,7 +49,45 @@ AI-powered Android Appium test generator. Runs fully locally with your own LLM.
 
 ## Quick Start
 
-### 1. Install
+### 1. Prerequisites
+
+Install all required tools via Homebrew:
+
+```bash
+# Appium server (mobile device automation)
+brew install appium
+
+# Android SDK command-line tools (includes ANDROID_HOME)
+brew install --cask android-commandlinetools
+
+# Android platform tools (includes adb, fastboot)
+brew install --cask android-platform-tools
+```
+
+Set the `ANDROID_HOME` environment variable. Add this to your `~/.zshrc` or `~/.bashrc`:
+
+```bash
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+```
+
+Then start Appium and install the Android UiAutomator2 driver:
+
+```bash
+# Start the Appium server (runs on port 4723 by default)
+brew services start appium
+
+# Install the Android UiAutomator2 driver (needed for Android automation)
+appium driver install uiautomator2
+```
+
+> **Enable USB debugging** on your Android device:
+> 1. Open *Settings → About phone* and tap *Build number* 7 times to enable Developer options
+> 2. Go to *Settings → System → Developer options*
+> 3. Enable **USB debugging**
+> 4. Connect your phone via USB and accept the debugging authorization prompt
+> 5. Verify with: `adb devices` — your device serial should appear
+
+### 2. Install
 
 ```bash
 git clone https://github.com/harrywesterman/aitest.git
@@ -59,7 +97,7 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-### 2. Configure
+### 3. Configure
 
 ```bash
 cp aitest.yaml.example aitest.yaml
@@ -89,7 +127,7 @@ notify:
   webhook: "https://hooks.example.com/fail"   # optional
 ```
 
-### 3. List connected devices
+### 4. List connected devices
 
 ```bash
 aitest devices
@@ -97,11 +135,10 @@ aitest devices
 
 Example output:
 ```
-  R58N910xxx1
-  R58N910xxx2
+  4a0aeefb
 ```
 
-### 4. Explore an app
+### 5. Explore an app
 
 ```bash
 aitest explore --app com.android.settings
@@ -109,7 +146,7 @@ aitest explore --app com.android.settings
 
 The AI connects to the device, opens the app, analyzes each screen, and generates test scripts in `tests/apps/`.
 
-### 5. Run all tests
+### 6. Run all tests
 
 ```bash
 aitest run

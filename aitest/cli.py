@@ -1,3 +1,4 @@
+import subprocess
 import typer
 from pathlib import Path
 from .config import Config
@@ -20,27 +21,94 @@ def explore(
     """Explore an Android device and generate test scripts"""
     cfg = Config.load(config_file)
     dm = DeviceManager(cfg.devices)
+    configured = [d for d in cfg.devices if d.serial]
     devices = (
         dm.discover()
-        if not cfg.devices
-        else [{"serial": d.serial} for d in cfg.devices]
+        if not configured
+        else [{"serial": d.serial} for d in configured]
     )
     if not devices:
         typer.echo("No devices found", err=True)
         raise typer.Exit(1)
     serial = devices[0]["serial"]
     port = dm.start_appium(serial)
+
+    if not app_package:
+        typer.echo("No app specified (use --app or --all)")
+        raise typer.Exit(1)
+
+    typer.echo(f"Launching {app_package} on {serial}...")
+
+    activity_result = subprocess.run(
+        ["adb", "-s", serial, "shell", "pm", "resolve-activity", "--brief", app_package],
+        capture_output=True, text=True,
+    )
+    app_activity = None
+    for line in activity_result.stdout.strip().split("\n"):
+        if line.startswith("com.") or line.startswith("android."):
+            parts = line.split("/", 1)
+            if len(parts) == 2:
+                app_activity = parts[1] if parts[1].startswith(".") else "." + parts[1]
+            break
+
+    if app_activity:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "am", "start", "-n", f"{app_package}/{app_activity.lstrip('.')}"],
+            capture_output=True,
+        )
+    else:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "monkey", "-p", app_package, "-c", "android.intent.category.LAUNCHER", "1"],
+            capture_output=True,
+        )
+
+    from appium import webdriver
+    from appium.options.android import UiAutomator2Options
+
+    options = UiAutomator2Options()
+    options.platform_name = "Android"
+    options.automation_name = "UiAutomator2"
+    options.device_name = serial
+    options.app_package = app_package
+    if app_activity:
+        options.app_activity = app_activity
+    options.no_reset = True
+    options.set_capability("uiautomator2ServerInstallTimeout", 60000)
+
+    driver = webdriver.Remote(f"http://localhost:{port}", options=options)
+
     explorer = ExplorerAgent(cfg.llm.url, cfg.llm.key, cfg.llm.model)
-    screens = []
-    if app_package:
-        typer.echo(f"Exploring {app_package}...")
-        screen = explorer.analyze_screen("<page_source />")
-        screens.append(screen)
+    typer.echo(f"Exploring {app_package} (max {explorer.max_screens} screens)...")
+    screens = explorer.explore_app(driver, app_package)
+
+    driver.quit()
+    typer.echo(f"Explored {len(screens)} screens")
+
     gen = TestGenerator()
-    code = gen.generate_test(app_package or "unknown", screens)
+    code = gen.generate_test(app_package, screens)
     out_dir = Path("tests/apps")
     out_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = (app_package or "unknown").replace(".", "_")
+    conftest = out_dir / "conftest.py"
+    if not conftest.exists():
+        conftest.write_text(
+            'import pytest\n'
+            'from appium import webdriver\n'
+            'from appium.options.android import UiAutomator2Options\n'
+            '\n'
+            '\n'
+            '@pytest.fixture\n'
+            'def driver():\n'
+            '    options = UiAutomator2Options()\n'
+            '    options.platform_name = "Android"\n'
+            '    options.automation_name = "UiAutomator2"\n'
+            '    options.device_name = "device"\n'
+            '    options.no_reset = True\n'
+            '    driver = webdriver.Remote("http://localhost:4723", options=options)\n'
+            '    yield driver\n'
+            '    driver.quit()\n'
+        )
+        typer.echo(f"Created: {conftest}")
+    safe_name = app_package.replace(".", "_")
     out_file = out_dir / f"test_{safe_name}.py"
     out_file.write_text(code)
     typer.echo(f"Generated: {out_file}")
@@ -54,10 +122,11 @@ def run(
     """Run the test suite on connected devices"""
     cfg = Config.load(config_file)
     dm = DeviceManager(cfg.devices)
+    configured = [d for d in cfg.devices if d.serial]
     devices = (
         dm.discover()
-        if not cfg.devices
-        else [{"serial": d.serial} for d in cfg.devices]
+        if not configured
+        else [{"serial": d.serial} for d in configured]
     )
     if device:
         devices = [d for d in devices if d["serial"] == device]
